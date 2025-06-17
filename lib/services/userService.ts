@@ -2,13 +2,18 @@ import { getDatabase } from "@/lib/mongodb"
 import type { User, UserStats } from "@/lib/models/User"
 import { ObjectId } from "mongodb"
 
+// Ensure User type defines _id as string
+interface UserWithStringId extends Omit<User, '_id'> {
+  _id: string
+}
+
 export class UserService {
   private async getCollection() {
     const db = await getDatabase()
     return db.collection<User>("users")
   }
 
-  async createOrUpdateUser(userData: Partial<User>): Promise<User> {
+  async createOrUpdateUser(userData: Partial<User>): Promise<UserWithStringId> {
     const collection = await this.getCollection()
 
     // Check if user exists by googleId or email
@@ -29,13 +34,13 @@ export class UserService {
             updatedAt: new Date(),
           },
         },
-        { returnDocument: "after" },
+        { returnDocument: "after" }
       )
       return { ...updatedUser!, _id: updatedUser!._id.toString() }
     } else {
       // Create new user
       const newUser: Omit<User, "_id"> = {
-        googleId: userData.googleId,
+        googleId: userData.googleId!,
         email: userData.email!,
         name: userData.name!,
         picture: userData.picture || "/placeholder.svg",
@@ -51,10 +56,15 @@ export class UserService {
     }
   }
 
-  async getUserById(userId: string): Promise<User | null> {
+  async getUserById(userId: string): Promise<UserWithStringId | null> {
     const collection = await this.getCollection()
     try {
-      const user = await collection.findOne({ _id: new ObjectId(userId) })
+      // Validate ObjectId format
+      if (!ObjectId.isValid(userId)) {
+        return null
+      }
+      
+      const user = await collection.findOne({ _id: userId })
       if (user) {
         return { ...user, _id: user._id.toString() }
       }
@@ -65,7 +75,7 @@ export class UserService {
     }
   }
 
-  async getUserByGoogleId(googleId: string): Promise<User | null> {
+  async getUserByGoogleId(googleId: string): Promise<UserWithStringId | null> {
     const collection = await this.getCollection()
     const user = await collection.findOne({ googleId })
     if (user) {
@@ -74,7 +84,7 @@ export class UserService {
     return null
   }
 
-  async getUserByEmail(email: string): Promise<User | null> {
+  async getUserByEmail(email: string): Promise<UserWithStringId | null> {
     const collection = await this.getCollection()
     const user = await collection.findOne({ email })
     if (user) {
@@ -85,41 +95,56 @@ export class UserService {
 
   async incrementRoomsCreated(userId: string): Promise<void> {
     const collection = await this.getCollection()
+    if (!ObjectId.isValid(userId)) {
+      throw new Error("Invalid userId")
+    }
+    
     await collection.updateOne(
-      { _id: new ObjectId(userId) },
+      { _id: userId },
       {
         $inc: { roomsCreated: 1 },
         $set: { updatedAt: new Date() },
-      },
+      }
     )
   }
 
   async incrementRoomsJoined(userId: string): Promise<void> {
     const collection = await this.getCollection()
+    if (!ObjectId.isValid(userId)) {
+      throw new Error("Invalid userId")
+    }
+    
     await collection.updateOne(
-      { _id: new ObjectId(userId) },
+      { _id: userId },
       {
         $inc: { roomsJoined: 1 },
         $set: { updatedAt: new Date() },
-      },
+      }
     )
   }
 
   async addMovieWatched(userId: string, movieName: string): Promise<void> {
     const collection = await this.getCollection()
+    if (!ObjectId.isValid(userId)) {
+      throw new Error("Invalid userId")
+    }
+    
     await collection.updateOne(
-      { _id: new ObjectId(userId) },
+      { _id: userId },
       {
         $addToSet: { moviesWatched: movieName },
         $set: { updatedAt: new Date() },
-      },
+      }
     )
   }
 
   async getUserStats(userId: string): Promise<UserStats | null> {
     const collection = await this.getCollection()
-    const user = await collection.findOne({ _id: new ObjectId(userId) })
-
+    if (!ObjectId.isValid(userId)) {
+      return null
+    }
+    
+    const user = await collection.findOne({ _id: userId })
     if (!user) return null
 
     return {
