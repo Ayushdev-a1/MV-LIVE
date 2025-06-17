@@ -85,12 +85,7 @@ export class ChunkUploadService {
     })
 
     return new Promise((resolve, reject) => {
-      uploadStream.end(chunkData, async (error) => {
-        if (error) {
-          reject(error)
-          return
-        }
-
+      uploadStream.on("finish", async () => {
         // Update session with uploaded chunk
         await collection.updateOne(
           { sessionId },
@@ -99,9 +94,12 @@ export class ChunkUploadService {
             $set: { updatedAt: new Date() },
           },
         )
-
         resolve(true)
       })
+      uploadStream.on("error", (error: any) => {
+        reject(error)
+      })
+      uploadStream.end(chunkData)
     })
   }
 
