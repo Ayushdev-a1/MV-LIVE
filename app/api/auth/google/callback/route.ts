@@ -25,8 +25,6 @@ export async function GET(request: NextRequest) {
 
   try {
     console.log("🔄 Exchanging code for tokens...")
-
-    // Exchange code for tokens
     const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: {

@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
     }
 
     const userData = JSON.parse(userSession);
-    console.log("✅ User session found:", {
+    console.log("✅  line 17 from//auth/api/get-session User session found:", {
       id: userData.id,
       email: userData.email,
       name: userData.name,
