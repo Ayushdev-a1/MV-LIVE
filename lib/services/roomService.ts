@@ -1,3 +1,4 @@
+import { Readable } from "stream";
 import { getDatabase } from "@/lib/mongodb"
 import { GridFSBucket, ObjectId } from "mongodb"
 import type { Room, Participant, MovieFile } from "@/lib/models/Room"
@@ -130,53 +131,119 @@ export class RoomService {
     )
   }
 
-  async uploadMovieFile(roomCode: string, fileBuffer: Buffer, filename: string, mimetype: string): Promise<string> {
-    const bucket = await this.getGridFSBucket()
-    const collection = await this.getCollection()
+  // async uploadMovieFile(roomCode: string, fileBuffer: Buffer, filename: string, mimetype: string): Promise<string> {
+  //   const bucket = await this.getGridFSBucket()
+  //   const collection = await this.getCollection()
 
-    // Upload file to GridFS
-    const uploadStream = bucket.openUploadStream(filename, {
-      metadata: {
-        roomCode,
-        uploadedAt: new Date(),
-        mimetype,
-        originalName: filename,
-        isStreamable: true,
+  //   // Upload file to GridFS
+  //   const uploadStream = bucket.openUploadStream(filename, {
+  //     metadata: {
+  //       roomCode,
+  //       uploadedAt: new Date(),
+  //       mimetype,
+  //       originalName: filename,
+  //       isStreamable: true,
+  //     },
+  //   })
+
+  //   return new Promise((resolve, reject) => {
+  //     uploadStream.on("error", (error: unknown) => {
+  //       reject(error)
+  //     })
+
+  //     uploadStream.on("finish", async () => {
+  //       const movieFile: MovieFile = {
+  //         filename: uploadStream.filename,
+  //         originalName: filename,
+  //         size: fileBuffer.length,
+  //         mimetype,
+  //         uploadedAt: new Date(),
+  //         chunks: [uploadStream.id.toString()],
+  //       }
+
+  //       // Update room with movie file info
+  //       await collection.updateOne(
+  //         { roomCode },
+  //         {
+  //           $set: {
+  //             movieFile,
+  //             updatedAt: new Date(),
+  //           },
+  //         },
+  //       )
+
+  //       resolve(uploadStream.id.toString())
+  //     })
+
+  //     uploadStream.end(fileBuffer)
+  //   })
+  // }
+  // Add to RoomService.ts
+// In RoomService.ts
+async updateMovieFile(roomCode: string, movieFile: MovieFile): Promise<void> {
+  const collection = await this.getCollection();
+  await collection.updateOne(
+    { roomCode, isActive: true },
+    {
+      $set: {
+        movieFile: {
+          filename: movieFile.filename,
+          originalName: movieFile.originalName,
+          size: movieFile.size,
+          mimetype: movieFile.mimetype,
+          uploadedAt: movieFile.uploadedAt,
+          chunks: movieFile.chunks,
+        },
+        updatedAt: new Date(),
       },
-    })
+    },
+  );
+}
 
-    return new Promise((resolve, reject) => {
-      uploadStream.on("error", (error: unknown) => {
-        reject(error)
-      })
 
-      uploadStream.on("finish", async () => {
-        const movieFile: MovieFile = {
-          filename: uploadStream.filename,
-          originalName: filename,
-          size: fileBuffer.length,
-          mimetype,
-          uploadedAt: new Date(),
-          chunks: [uploadStream.id.toString()],
-        }
+async uploadMovieFile(roomCode: string, fileStream: Readable, filename: string, mimetype: string): Promise<string> {
+  const bucket = await this.getGridFSBucket();
+  const collection = await this.getCollection();
 
-        // Update room with movie file info
-        await collection.updateOne(
-          { roomCode },
-          {
-            $set: {
-              movieFile,
-              updatedAt: new Date(),
-            },
+  const uploadStream = bucket.openUploadStream(filename, {
+    metadata: {
+      roomCode,
+      uploadedAt: new Date(),
+      mimetype,
+      originalName: filename,
+      isStreamable: true,
+    },
+  });
+
+  return new Promise((resolve, reject) => {
+    fileStream.pipe(uploadStream);
+    uploadStream.on("finish", async () => {
+      const movieFile: MovieFile = {
+        filename: uploadStream.filename,
+        originalName: filename,
+        size: uploadStream.length || 0,
+        mimetype,
+        uploadedAt: new Date(),
+        chunks: [uploadStream.id.toString()],
+      };
+
+      await collection.updateOne(
+        { roomCode },
+        {
+          $set: {
+            movieFile,
+            updatedAt: new Date(),
           },
-        )
+        },
+      );
 
-        resolve(uploadStream.id.toString())
-      })
-
-      uploadStream.end(fileBuffer)
-    })
-  }
+      resolve(uploadStream.id.toString());
+    });
+    uploadStream.on("error", reject);
+    fileStream.on("error", reject);
+  });
+}
+  
 
   async getMovieStream(roomCode: string): Promise<NodeJS.ReadableStream | null> {
     const bucket = await this.getGridFSBucket()
