@@ -1,156 +1,220 @@
-"use client"
+"use client";
 
-import type React from "react"
-
-import { useState, useRef, useCallback } from "react"
-import { Button } from "@/components/ui/button"
-import { Progress } from "@/components/ui/progress"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Upload, X, AlertCircle, CheckCircle, Film } from "lucide-react"
-import { useAuth } from "@/hooks/useAuth"
+import type React from "react";
+import { useState, useRef, useCallback } from "react";
+import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Upload, X, AlertCircle, CheckCircle, Film } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
 
 interface MovieUploaderProps {
-  roomCode: string 
-  onUploadComplete: (fileId: string) => void
-  onUploadError: (error: string) => void
+  roomCode: string;
+  onUploadComplete: (fileId: string) => void;
+  onUploadError: (error: string) => void;
 }
 
 export function MovieUploader({ roomCode, onUploadComplete, onUploadError }: MovieUploaderProps) {
-  const [isUploading, setIsUploading] = useState(false)
-  const [progress, setProgress] = useState(0)
-  const [currentFile, setCurrentFile] = useState<File | null>(null)
-  const [error, setError] = useState("")
-  const [success, setSuccess] = useState("")
-  const { user, isLoading, isAuthenticated, refreshAuth } = useAuth()
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const abortControllerRef = useRef<AbortController | null>(null)
+  const [isUploading, setIsUploading] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [currentFile, setCurrentFile] = useState<File | null>(null);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const { user, isAuthenticated } = useAuth();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
+
+  const completeUpload = async (file: File, sessionId: string) => {
+    const response = await fetch(`/api/upload/progress/${sessionId}`, {
+      method: "GET",
+      signal: abortControllerRef.current?.signal,
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || "Failed to check progress");
+    }
+
+    const { isComplete } = await response.json();
+    if (!isComplete) {
+      throw new Error("Upload not complete");
+    }
+
+    const completeBody = JSON.stringify({
+      sessionId,
+      roomCode,
+      filename: file.name,
+      totalSize: file.size,
+      mimetype: file.type,
+    });
+
+    const completeResponse = await fetch(`/api/upload/complete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: completeBody,
+      signal: abortControllerRef.current?.signal,
+    });
+
+    if (!completeResponse.ok) {
+      const errorData = await completeResponse.json();
+      throw new Error(errorData.error || "Failed to complete upload");
+    }
+
+    const { fileId } = await completeResponse.json();
+    console.log("✅ Upload completed:", fileId);
+    setSuccess("Movie uploaded successfully!");
+    onUploadComplete(fileId);
+  };
 
   const uploadFile = useCallback(
     async (file: File) => {
-      if (!file) return
+      if (!file) return;
 
-      console.log("🎬 Starting file upload:", file.name)
-      setIsUploading(true)
-      setProgress(0)
-      setCurrentFile(file)
-      setError("")
-      setSuccess("")
+      console.log("🎬 Starting file upload:", file.name);
+      setIsUploading(true);
+      setProgress(0);
+      setCurrentFile(file);
+      setError("");
+      setSuccess("");
 
       try {
         // Check authentication
-        
-
         if (!user || !isAuthenticated) {
-          throw new Error("Please sign in to upload movies")
+          throw new Error("Please sign in to upload movies");
         }
 
-        console.log("✅ User authenticated for upload")
+        console.log("✅ User authenticated for upload");
 
-        // Create FormData
-        const formData = new FormData()
-        formData.append("movie", file)
+        // Step 1: Initialize upload session
+        const initBody = JSON.stringify({
+          roomCode,
+          filename: file.name,
+          totalSize: file.size,
+          mimetype: file.type,
+        });
 
-        console.log("📤 Uploading file...")
-
-        // Create abort controller for cancellation
-        abortControllerRef.current = new AbortController()
-
-        // Simulate progress for large files
-        const progressInterval = setInterval(() => {
-          setProgress((prev) => {
-            if (prev >= 90) {
-              clearInterval(progressInterval)
-              return prev
-            }
-            return prev + Math.random() * 10
-          })
-        }, 1000)
-
-        const response = await fetch(`/api/rooms/${roomCode}/upload`, {
+        abortControllerRef.current = new AbortController();
+        const initResponse = await fetch(`/api/upload/session`, {
           method: "POST",
-          body: formData,
+          headers: { "Content-Type": "application/json" },
+          body: initBody,
           signal: abortControllerRef.current.signal,
-        })
+        });
 
-        clearInterval(progressInterval)
-
-        console.log("📥 Upload response:", response.status)
-
-        if (!response.ok) {
-          const errorData = await response.json()
-          throw new Error(errorData.error || "Upload failed")
+        if (!initResponse.ok) {
+          const errorData = await initResponse.json();
+          throw new Error(errorData.error || "Failed to initialize upload");
         }
 
-        const result = await response.json()
-        console.log("✅ Upload successful:", result)
+        const { sessionId } = await initResponse.json();
+        console.log("📤 Upload session initialized:", sessionId);
 
-        setProgress(100)
-        setSuccess("Movie uploaded successfully!")
-        onUploadComplete(result.fileId)
+        // Step 2: Upload chunks
+        const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+        for (let i = 0; i < totalChunks; i++) {
+          const start = i * CHUNK_SIZE;
+          const end = Math.min(start + CHUNK_SIZE, file.size);
+          const chunk = file.slice(start, end);
+
+          const chunkFormData = new FormData();
+          chunkFormData.append("sessionId", sessionId);
+          chunkFormData.append("chunkIndex", i.toString());
+          chunkFormData.append("chunk", chunk);
+
+          const chunkResponse = await fetch(`/api/upload/chunk`, {
+            method: "POST",
+            body: chunkFormData,
+            signal: abortControllerRef.current.signal,
+          });
+
+          if (!chunkResponse.ok) {
+            const errorData = await chunkResponse.json();
+            throw new Error(errorData.error || `Failed to upload chunk ${i}`);
+          }
+
+          // Fetch progress
+          const progressResponse = await fetch(`/api/upload/progress/${sessionId}`, {
+            method: "GET",
+            signal: abortControllerRef.current.signal,
+          });
+
+          if (!progressResponse.ok) {
+            const errorData = await progressResponse.json();
+            throw new Error(errorData.error || "Failed to fetch progress");
+          }
+
+          const { progress, isComplete } = await progressResponse.json();
+          setProgress(progress);
+          console.log(`📤 Chunk ${i + 1}/${totalChunks} uploaded, progress: ${progress}%`);
+
+          if (isComplete && i === totalChunks - 1) {
+            await completeUpload(file, sessionId);
+          }
+        }
       } catch (error: any) {
         if (error.name === "AbortError") {
-          console.log("📤 Upload cancelled")
-          setError("Upload cancelled")
+          console.log("📤 Upload cancelled");
+          setError("Upload cancelled");
         } else {
-          console.error("💥 Upload error:", error)
-          setError(error.message)
-          onUploadError(error.message)
+          console.error("💥 Upload error:", error);
+          setError(error.message);
+          onUploadError(error.message);
         }
       } finally {
-        setIsUploading(false)
+        setIsUploading(false);
         setTimeout(() => {
-          setProgress(0)
-          setCurrentFile(null)
-          setError("")
-          setSuccess("")
-        }, 3000)
+          setProgress(0);
+          setCurrentFile(null);
+          setError("");
+          setSuccess("");
+        }, 3000);
       }
     },
-    [roomCode, onUploadComplete, onUploadError],
-  )
+    [roomCode, onUploadComplete, onUploadError, user, isAuthenticated],
+  );
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
+    const file = event.target.files?.[0];
     if (file) {
-      console.log("📁 File selected:", file.name, file.size, file.type)
+      console.log("📁 File selected:", file.name, file.size, file.type);
 
       // Validate file
-      const maxSize = 2 * 1024 * 1024 * 1024 // 2GB
+      const maxSize = 2 * 1024 * 1024 * 1024; // 2GB
       if (file.size > maxSize) {
-        setError("File too large. Maximum size is 2GB")
-        return
+        setError("File too large. Maximum size is 2GB");
+        return;
       }
 
-      const allowedTypes = ["video/mp4", "video/avi", "video/mkv", "video/mov", "video/wmv", "video/webm"]
+      const allowedTypes = ["video/mp4", "video/avi", "video/mkv", "video/mov", "video/wmv", "video/webm"];
       if (!allowedTypes.includes(file.type)) {
-        setError("Invalid file type. Only video files are allowed")
-        return
+        setError("Invalid file type. Only video files are allowed");
+        return;
       }
 
-      uploadFile(file)
+      uploadFile(file);
     }
-  }
+  };
 
   const cancelUpload = () => {
     if (abortControllerRef.current) {
-      abortControllerRef.current.abort()
+      abortControllerRef.current.abort();
     }
-    setIsUploading(false)
-    setProgress(0)
-    setCurrentFile(null)
-  }
+    setIsUploading(false);
+    setProgress(0);
+    setCurrentFile(null);
+  };
 
   const formatBytes = (bytes: number): string => {
-    if (bytes === 0) return "0 Bytes"
-    const k = 1024
-    const sizes = ["Bytes", "KB", "MB", "GB"]
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return Number.parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i]
-  }
+    if (bytes === 0) return "0 Bytes";
+    const k = 1024;
+    const sizes = ["Bytes", "KB", "MB", "GB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return Number.parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+  };
 
   return (
     <div className="space-y-4">
-      {/* Error Alert */}
       {error && (
         <Alert className="border-red-500 bg-red-500/10">
           <AlertCircle className="h-4 w-4" />
@@ -158,7 +222,6 @@ export function MovieUploader({ roomCode, onUploadComplete, onUploadError }: Mov
         </Alert>
       )}
 
-      {/* Success Alert */}
       {success && (
         <Alert className="border-green-500 bg-green-500/10">
           <CheckCircle className="h-4 w-4" />
@@ -210,5 +273,5 @@ export function MovieUploader({ roomCode, onUploadComplete, onUploadError }: Mov
         </div>
       )}
     </div>
-  )
+  );
 }

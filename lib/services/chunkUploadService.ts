@@ -60,6 +60,23 @@ export class ChunkUploadService {
     }
   }
 
+  async getSession(sessionId: string): Promise<ChunkUploadSession | null> {
+    try {
+      const collection = await this.getSessionCollection()
+      const session = await collection.findOne({ sessionId })
+
+      if (!session) {
+        console.log(`Session not found: ${sessionId}`)
+        return null
+      }
+
+      return session
+    } catch (error) {
+      console.error("Error retrieving session:", error)
+      throw new Error("Failed to retrieve session")
+    }
+  }
+
   async uploadChunk(sessionId: string, chunkIndex: number, chunkData: Buffer): Promise<boolean> {
     const collection = await this.getSessionCollection()
     const bucket = await this.getGridFSBucket()
