@@ -64,9 +64,8 @@ export class UserService {
         console.log("Invalid ObjectId:", userId)
         return null
       }
-      
-      // Convert string userId to ObjectId for the query
-      const user = await collection.findOne({ _id: new ObjectId(userId) })
+      // Use _id as string in the filter to match the collection's schema
+      const user = await collection.findOne({ _id: userId })
       if (user) {
         return { ...user, _id: user._id.toString() }
       }
@@ -101,9 +100,8 @@ export class UserService {
     if (!ObjectId.isValid(userId)) {
       throw new Error("Invalid userId")
     }
-    
     await collection.updateOne(
-      { _id: new ObjectId(userId) },
+      { _id: userId },
       {
         $inc: { roomsCreated: 1 },
         $set: { updatedAt: new Date() },
@@ -116,9 +114,8 @@ export class UserService {
     if (!ObjectId.isValid(userId)) {
       throw new Error("Invalid userId")
     }
-    
     await collection.updateOne(
-      { _id: new ObjectId(userId) },
+      { _id: userId },
       {
         $inc: { roomsJoined: 1 },
         $set: { updatedAt: new Date() },
@@ -131,9 +128,8 @@ export class UserService {
     if (!ObjectId.isValid(userId)) {
       throw new Error("Invalid userId")
     }
-    
     await collection.updateOne(
-      { _id: new ObjectId(userId) },
+      { _id: userId },
       {
         $addToSet: { moviesWatched: movieName },
         $set: { updatedAt: new Date() },
@@ -146,8 +142,8 @@ export class UserService {
     if (!ObjectId.isValid(userId)) {
       return null
     }
-    
-    const user = await collection.findOne({ _id: new ObjectId(userId) })
+
+    const user = await collection.findOne({ _id: userId })
     if (!user) return null
 
     return {
