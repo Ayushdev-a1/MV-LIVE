@@ -21,11 +21,13 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
       passThrough.destroy();
     });
 
-    // Handle client abort
-    request.on("close", () => {
-      console.log(`Client closed connection for room ${params.id}`);
-      passThrough.destroy();
-    });
+    // Handle client abort (NextRequest does not support 'on', so use AbortSignal)
+    if (request.signal) {
+      request.signal.addEventListener("abort", () => {
+        console.log(`Client closed connection for room ${params.id}`);
+        passThrough.destroy();
+      });
+    }
 
     const webStream = Readable.toWeb(passThrough) as ReadableStream;
 
