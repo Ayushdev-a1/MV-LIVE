@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { StreamingService } from "@/lib/services/streamingService"
+import { Readable } from "stream"
 
 export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
   try {
@@ -10,6 +11,9 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
       params.id,
       range || undefined,
     )
+
+    // Convert Node.js stream to Web ReadableStream for broader compatibility
+    const webStream = Readable.toWeb(stream as any) as ReadableStream
 
     const headers: Record<string, string> = {
       "Content-Type": contentType,
@@ -23,7 +27,7 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
       headers["Content-Range"] = contentRange
       headers["Content-Length"] = contentLength.toString()
 
-      return new NextResponse(stream as any, {
+      return new NextResponse(webStream, {
         status: 206, // Partial Content
         headers,
       })
@@ -31,7 +35,7 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
 
     headers["Content-Length"] = contentLength.toString()
 
-    return new NextResponse(stream as any, {
+    return new NextResponse(webStream, {
       status: 200,
       headers,
     })
