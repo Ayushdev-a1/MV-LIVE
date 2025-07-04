@@ -75,9 +75,14 @@ export function initializeSocketServer() {
           await roomService.updateVideoState(roomCode, currentTime, data.isPlaying);
         } else if (action === "timeUpdate") {
           // Throttle timeUpdate to prevent flooding
-          socket.throttle("video-control", 1000, () => {
+          const now = Date.now();
+          if (
+            !socket.data.lastTimeUpdateEmit ||
+            now - socket.data.lastTimeUpdateEmit > 1000
+          ) {
+            socket.data.lastTimeUpdateEmit = now;
             io?.to(roomCode).emit("video-control", action, { currentTime, isPlaying: data.isPlaying });
-          });
+          }
           return;
         }
 
