@@ -1,27 +1,27 @@
-import { getDatabase } from "@/lib/mongodb"
-import type { User, UserStats } from "@/lib/models/User"
-import { ObjectId } from "mongodb"
+import { getDatabase } from "@/lib/mongodb";
+import type { User, UserStats } from "@/lib/models/User";
+import { ObjectId } from "mongodb";
 
-// Ensure User type defines _id as string
+// Ensure User type defines _id as ObjectId, but return string in UserWithStringId
 interface UserWithStringId extends Omit<User, '_id'> {
-  _id: string
+  _id: string;
 }
 
 export class UserService {
   private async getCollection() {
-    const db = await getDatabase()
-    return db.collection<User>("users")
+    const db = await getDatabase();
+    return db.collection<User>("users");
   }
 
   async createOrUpdateUser(userData: Partial<User>): Promise<UserWithStringId> {
-    const collection = await this.getCollection()
+    const collection = await this.getCollection();
 
     // Check if user exists by googleId or email
-    let existingUser = null
+    let existingUser = null;
     if (userData.googleId) {
-      existingUser = await collection.findOne({ googleId: userData.googleId })
+      existingUser = await collection.findOne({ googleId: userData.googleId });
     } else if (userData.email) {
-      existingUser = await collection.findOne({ email: userData.email })
+      existingUser = await collection.findOne({ email: userData.email });
     }
 
     if (existingUser) {
@@ -35,8 +35,8 @@ export class UserService {
           },
         },
         { returnDocument: "after" }
-      )
-      return { ...updatedUser!, _id: updatedUser!._id.toString() }
+      );
+      return { ...updatedUser!, _id: updatedUser!._id.toString() };
     } else {
       // Create new user
       const newUser: Omit<User, "_id"> = {
@@ -49,108 +49,108 @@ export class UserService {
         moviesWatched: [],
         createdAt: new Date(),
         updatedAt: new Date(),
-      }
+      };
 
-      const result = await collection.insertOne(newUser as any)
-      return { ...newUser, _id: result.insertedId.toString() }
+      const result = await collection.insertOne(newUser as any);
+      return { ...newUser, _id: result.insertedId.toString() };
     }
   }
 
   async getUserById(userId: string): Promise<UserWithStringId | null> {
-    const collection = await this.getCollection()
+    const collection = await this.getCollection();
     try {
       // Validate ObjectId format
       if (!ObjectId.isValid(userId)) {
-        console.log("Invalid ObjectId:", userId)
-        return null
+        console.log("Invalid ObjectId:", userId);
+        return null;
       }
-      // Use _id as string in the filter to match the collection's schema
-      const user = await collection.findOne({ _id: userId })
+      // Query with ObjectId
+      const user = await collection.findOne({ _id: new ObjectId(userId) });
       if (user) {
-        return { ...user, _id: user._id.toString() }
+        return { ...user, _id: user._id.toString() };
       }
-      console.log("User not found for ID:", userId)
-      return null
+      console.log("User not found for ID:", userId);
+      return null;
     } catch (error) {
-      console.error("Error getting user by ID:", error)
-      return null
+      console.error("Error getting user by ID:", error);
+      return null;
     }
   }
 
   async getUserByGoogleId(googleId: string): Promise<UserWithStringId | null> {
-    const collection = await this.getCollection()
-    const user = await collection.findOne({ googleId })
+    const collection = await this.getCollection();
+    const user = await collection.findOne({ googleId });
     if (user) {
-      return { ...user, _id: user._id.toString() }
+      return { ...user, _id: user._id.toString() };
     }
-    return null
+    return null;
   }
 
   async getUserByEmail(email: string): Promise<UserWithStringId | null> {
-    const collection = await this.getCollection()
-    const user = await collection.findOne({ email })
+    const collection = await this.getCollection();
+    const user = await collection.findOne({ email });
     if (user) {
-      return { ...user, _id: user._id.toString() }
+      return { ...user, _id: user._id.toString() };
     }
-    return null
+    return null;
   }
 
   async incrementRoomsCreated(userId: string): Promise<void> {
-    const collection = await this.getCollection()
+    const collection = await this.getCollection();
     if (!ObjectId.isValid(userId)) {
-      throw new Error("Invalid userId")
+      throw new Error("Invalid userId");
     }
     await collection.updateOne(
-      { _id: userId },
+      { _id: new ObjectId(userId) },
       {
         $inc: { roomsCreated: 1 },
         $set: { updatedAt: new Date() },
       }
-    )
+    );
   }
 
   async incrementRoomsJoined(userId: string): Promise<void> {
-    const collection = await this.getCollection()
+    const collection = await this.getCollection();
     if (!ObjectId.isValid(userId)) {
-      throw new Error("Invalid userId")
+      throw new Error("Invalid userId");
     }
     await collection.updateOne(
-      { _id: userId },
+      { _id: new ObjectId(userId) },
       {
         $inc: { roomsJoined: 1 },
         $set: { updatedAt: new Date() },
       }
-    )
+    );
   }
 
   async addMovieWatched(userId: string, movieName: string): Promise<void> {
-    const collection = await this.getCollection()
+    const collection = await this.getCollection();
     if (!ObjectId.isValid(userId)) {
-      throw new Error("Invalid userId")
+      throw new Error("Invalid userId");
     }
     await collection.updateOne(
-      { _id: userId },
+      { _id: new ObjectId(userId) },
       {
         $addToSet: { moviesWatched: movieName },
         $set: { updatedAt: new Date() },
       }
-    )
+    );
   }
 
   async getUserStats(userId: string): Promise<UserStats | null> {
-    const collection = await this.getCollection()
+    const collection = await this.getCollection();
     if (!ObjectId.isValid(userId)) {
-      return null
+      return null;
     }
 
-    const user = await collection.findOne({ _id: userId })
-    if (!user) return null
+    const user = await collection.findOne({ _id: new ObjectId(userId) });
+    if (!user) return null;
 
     return {
       roomsCreated: user.roomsCreated,
       roomsJoined: user.roomsJoined,
       moviesWatched: user.moviesWatched.length,
       totalWatchTime: 0, // Can be calculated from room history
-    }
+    };
   }
 }
