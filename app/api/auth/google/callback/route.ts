@@ -1,81 +1,97 @@
-import { type NextRequest, NextResponse } from "next/server"
-import { cookies } from "next/headers"
-import { UserService } from "@/lib/services/userService"
+// app/api/auth/google/callback/route.ts
+import { type NextRequest, NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
+import { UserService } from '@/lib/services/userService';
 
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET
-const REDIRECT_URI = process.env.NEXTAUTH_URL + "/api/auth/google/callback"
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+const REDIRECT_URI = process.env.NEXTAUTH_URL + '/api/auth/google/callback';
 
 export async function GET(request: NextRequest) {
-  console.log("🔐 Google OAuth callback triggered")
+  const requestId = Math.random().toString(36).substring(2);
+  console.log(`[${requestId}] 🔐 Google OAuth callback triggered`);
+  console.log(`[${requestId}] Callback URL:`, request.url);
+  console.log(`[${requestId}] MONGODB_URI:`, process.env.MONGODB_URI ? 'Set' : 'Not set');
 
-  const { searchParams } = new URL(request.url)
-  const code = searchParams.get("code")
-  const error = searchParams.get("error")
+  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !REDIRECT_URI) {
+    console.error(`[${requestId}] Missing required environment variables`);
+    return NextResponse.redirect(new URL('/auth?error=config_error', request.url));
+  }
+
+  const { searchParams } = new URL(request.url);
+  const code = searchParams.get('code');
+  const error = searchParams.get('error');
 
   if (error) {
-    console.log("❌ OAuth error:", error)
-    return NextResponse.redirect(new URL("/auth?error=oauth_error", request.url))
+    console.log(`[${requestId}] ❌ OAuth error:`, error);
+    return NextResponse.redirect(new URL(`/auth?error=${error}`, request.url));
   }
 
   if (!code) {
-    console.log("❌ No authorization code received")
-    return NextResponse.redirect(new URL("/auth?error=no_code", request.url))
+    console.log(`[${requestId}] ❌ No authorization code received`);
+    return NextResponse.redirect(new URL('/auth?error=no_code', request.url));
   }
 
   try {
-    console.log("🔄 Exchanging code for tokens...")
-    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
+    console.log(`[${requestId}] 🔄 Exchanging code for tokens...`);
+    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
       headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
+        'Content-Type': 'application/x-www-form-urlencoded',
       },
       body: new URLSearchParams({
-        client_id: GOOGLE_CLIENT_ID || "",
-        client_secret: GOOGLE_CLIENT_SECRET || "",
+        client_id: GOOGLE_CLIENT_ID,
+        client_secret: GOOGLE_CLIENT_SECRET,
         code,
-        grant_type: "authorization_code",
+        grant_type: 'authorization_code',
         redirect_uri: REDIRECT_URI,
       }),
-    })
+    });
 
-    const tokens = await tokenResponse.json()
-    console.log("🎫 Token response status:", tokenResponse.status)
+    const tokens = await tokenResponse.json();
+    console.log(`[${requestId}] 🎫 Token response status:`, tokenResponse.status, tokens);
 
-    if (!tokens.access_token) {
-      console.log("❌ No access token received:", tokens)
-      throw new Error("No access token received")
+    if (!tokenResponse.ok || !tokens.access_token) {
+      console.error(`[${requestId}] ❌ Token exchange failed:`, tokens);
+      throw new Error(`Token exchange failed: ${tokens.error || 'No access token'}`);
     }
 
-    console.log("✅ Access token received")
+    console.log(`[${requestId}] ✅ Access token received`);
 
-    // Get user info from Google
-    const userResponse = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+    const userResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
       headers: {
         Authorization: `Bearer ${tokens.access_token}`,
       },
-    })
+    });
 
-    const googleUser = await userResponse.json()
-    console.log("👤 Google user info:", { id: googleUser.id, email: googleUser.email, name: googleUser.name })
-
-    if (!googleUser.id || !googleUser.email) {
-      throw new Error("Invalid user data from Google")
+    if (!userResponse.ok) {
+      const errorText = await userResponse.text();
+      console.error(`[${requestId}] ❌ User info fetch failed:`, userResponse.status, errorText);
+      throw new Error(`User info fetch failed: ${errorText}`);
     }
 
-    // Create or update user in database using UserService
-    console.log("💾 Storing user in database...")
-    const userService = new UserService()
+    const googleUser = await userResponse.json();
+    console.log(`[${requestId}] 👤 Google user info:`, {
+      id: googleUser.id,
+      email: googleUser.email,
+      name: googleUser.name,
+    });
+
+    if (!googleUser.id || !googleUser.email) {
+      throw new Error('Invalid user data from Google');
+    }
+
+    console.log(`[${requestId}] 💾 Storing user in database...`);
+    const userService = new UserService();
     const dbUser = await userService.createOrUpdateUser({
       googleId: googleUser.id,
       email: googleUser.email,
       name: googleUser.name,
       picture: googleUser.picture,
-    })
+    });
 
-    console.log("✅ User stored in database:", dbUser._id)
+    console.log(`[${requestId}] ✅ User stored in database:`, dbUser._id);
 
-    // Create comprehensive user session
     const userSession = {
       id: dbUser._id,
       googleId: dbUser.googleId,
@@ -83,37 +99,35 @@ export async function GET(request: NextRequest) {
       name: dbUser.name,
       picture: dbUser.picture,
       accessToken: tokens.access_token,
-      loginMethod: "google",
+      loginMethod: 'google',
       loginTime: new Date().toISOString(),
       isAuthenticated: true,
-    }
+    };
 
-    console.log("💾 Creating user session:", { id: userSession.id, email: userSession.email, name: userSession.name })
+    console.log(`[${requestId}] 💾 Creating user session:`, {
+      id: userSession.id,
+      email: userSession.email,
+      name: userSession.name,
+    });
 
-    // Set secure session cookie
-    const cookieStore = cookies()
-    const sessionValue = JSON.stringify(userSession)
-    console.log("🍪 Setting user-session cookie with options:",  {
+    const cookieStore = cookies();
+    const sessionValue = JSON.stringify(userSession);
+    console.log(`[${requestId}] 🍪 Setting user-session cookie:`, sessionValue);
+
+    cookieStore.set('user-session', sessionValue, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 60 * 60 * 24 * 7, // 7 days 
-    }, sessionValue)
-    
-    cookieStore.set("user-session", sessionValue, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
       maxAge: 60 * 60 * 24 * 7, // 7 days
-      path: "/",
-    })
-    console.log("✅ Session cookies set successfully")
-    console.log("🔄 Redirecting to dashboard...")
+      path: '/',
+    });
 
-    // Redirect to dashboard
-    return NextResponse.redirect(new URL("/dashboard", request.url))
+    console.log(`[${requestId}] ✅ Session cookies set successfully`);
+    console.log(`[${requestId}] 🔄 Redirecting to dashboard...`);
+
+    return NextResponse.redirect(new URL('/dashboard', request.url));
   } catch (error) {
-    console.error("💥 Google OAuth error:", error)
-    return NextResponse.redirect(new URL("/auth?error=oauth_failed", request.url))
+    console.error(`[${requestId}] 💥 Google OAuth error:`, error);
+    return NextResponse.redirect(new URL('/auth?error=oauth_failed', request.url));
   }
 }
