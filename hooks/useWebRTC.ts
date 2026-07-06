@@ -17,6 +17,7 @@ export function useWebRTC({ socket, roomId, userId }: UseWebRTCProps) {
 
   const localVideoRef = useRef<HTMLVideoElement>(null)
   const peerConnections = useRef<Map<string, RTCPeerConnection>>(new Map())
+  const userToSocketMap = useRef<Map<string, string>>(new Map())
 
   const configuration: RTCConfiguration = {
     iceServers: [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }],
@@ -64,7 +65,10 @@ export function useWebRTC({ socket, roomId, userId }: UseWebRTCProps) {
       // Handle ICE candidates
       peerConnection.onicecandidate = (event) => {
         if (event.candidate && socket) {
-          socket.emit("webrtc-ice-candidate", roomId, event.candidate, remoteUserId)
+          const targetSocketId = userToSocketMap.current.get(remoteUserId)
+          if (targetSocketId) {
+            socket.emit("webrtc-ice-candidate", roomId, event.candidate, targetSocketId)
+          }
         }
       }
 
@@ -76,7 +80,8 @@ export function useWebRTC({ socket, roomId, userId }: UseWebRTCProps) {
 
   // Create and send offer
   const createOffer = useCallback(
-    async (remoteUserId: string) => {
+    async (remoteUserId: string, remoteSocketId: string) => {
+      userToSocketMap.current.set(remoteUserId, remoteSocketId)
       const peerConnection = createPeerConnection(remoteUserId)
 
       try {
@@ -84,7 +89,7 @@ export function useWebRTC({ socket, roomId, userId }: UseWebRTCProps) {
         await peerConnection.setLocalDescription(offer)
 
         if (socket) {
-          socket.emit("webrtc-offer", roomId, offer, remoteUserId)
+          socket.emit("webrtc-offer", roomId, offer, remoteSocketId)
         }
       } catch (error) {
         console.error("Error creating offer:", error)
@@ -95,7 +100,9 @@ export function useWebRTC({ socket, roomId, userId }: UseWebRTCProps) {
 
   // Handle received offer
   const handleOffer = useCallback(
-    async (offer: RTCSessionDescriptionInit, remoteUserId: string) => {
+    async (offer: RTCSessionDescriptionInit, remoteSocketId: string, remoteUserId: string) => {
+      if (!remoteUserId) return
+      userToSocketMap.current.set(remoteUserId, remoteSocketId)
       const peerConnection = createPeerConnection(remoteUserId)
 
       try {
@@ -104,7 +111,7 @@ export function useWebRTC({ socket, roomId, userId }: UseWebRTCProps) {
         await peerConnection.setLocalDescription(answer)
 
         if (socket) {
-          socket.emit("webrtc-answer", roomId, answer, remoteUserId)
+          socket.emit("webrtc-answer", roomId, answer, remoteSocketId)
         }
       } catch (error) {
         console.error("Error handling offer:", error)
@@ -114,7 +121,9 @@ export function useWebRTC({ socket, roomId, userId }: UseWebRTCProps) {
   )
 
   // Handle received answer
-  const handleAnswer = useCallback(async (answer: RTCSessionDescriptionInit, remoteUserId: string) => {
+  const handleAnswer = useCallback(async (answer: RTCSessionDescriptionInit, remoteSocketId: string, remoteUserId: string) => {
+    if (!remoteUserId) return
+    userToSocketMap.current.set(remoteUserId, remoteSocketId)
     const peerConnection = peerConnections.current.get(remoteUserId)
 
     if (peerConnection) {
@@ -127,7 +136,8 @@ export function useWebRTC({ socket, roomId, userId }: UseWebRTCProps) {
   }, [])
 
   // Handle ICE candidate
-  const handleIceCandidate = useCallback(async (candidate: RTCIceCandidateInit, remoteUserId: string) => {
+  const handleIceCandidate = useCallback(async (candidate: RTCIceCandidateInit, remoteSocketId: string, remoteUserId: string) => {
+    if (!remoteUserId) return
     const peerConnection = peerConnections.current.get(remoteUserId)
 
     if (peerConnection) {
@@ -165,9 +175,9 @@ export function useWebRTC({ socket, roomId, userId }: UseWebRTCProps) {
   useEffect(() => {
     if (!socket) return
 
-    socket.on("user-joined", (newUserId: string) => {
-      if (newUserId !== userId) {
-        createOffer(newUserId)
+    socket.on("user-joined", (newUserId: string, newSocketId: string) => {
+      if (newUserId !== userId && newSocketId) {
+        createOffer(newUserId, newSocketId)
       }
     })
 
@@ -175,12 +185,13 @@ export function useWebRTC({ socket, roomId, userId }: UseWebRTCProps) {
     socket.on("webrtc-answer", handleAnswer)
     socket.on("webrtc-ice-candidate", handleIceCandidate)
 
-    socket.on("user-left", (leftUserId: string) => {
+    socket.on("user-left", (leftUserId: string, leftSocketId: string) => {
       const peerConnection = peerConnections.current.get(leftUserId)
       if (peerConnection) {
         peerConnection.close()
         peerConnections.current.delete(leftUserId)
       }
+      userToSocketMap.current.delete(leftUserId)
       setRemoteStreams((prev) => {
         const newMap = new Map(prev)
         newMap.delete(leftUserId)

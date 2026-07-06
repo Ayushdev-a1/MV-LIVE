@@ -1,6 +1,6 @@
 const { createServer } = require("http")
 const { Server } = require("socket.io")
-const { MongoClient } = require("mongodb")
+const { MongoClient, GridFSBucket } = require("mongodb")
 
 // MongoDB connection
 let db = null
@@ -11,7 +11,6 @@ async function connectToDatabase() {
   const client = new MongoClient(process.env.MONGODB_URI || "mongodb://localhost:27017/cinesync")
   await client.connect()
   db = client.db("cinesync")
-  console.log(db);
   console.log("Connected to MongoDB")
   return db
 }
@@ -38,16 +37,67 @@ async function updateVideoState(roomCode, currentTime, isPlaying) {
 
 async function endRoom(roomCode) {
   const database = await connectToDatabase()
-  await database.collection("rooms").updateOne(
-    { roomCode },
-    {
-      $set: {
-        isActive: false,
-        endedAt: new Date(),
-        updatedAt: new Date(),
+  const room = await database.collection("rooms").findOne({ roomCode })
+
+  if (room) {
+    const bucket = new GridFSBucket(database, { bucketName: "movies" })
+    if (room.movieFile) {
+      try {
+        const files = await bucket.find({ filename: room.movieFile.filename }).toArray()
+        for (const file of files) {
+          await bucket.delete(file._id)
+        }
+        console.log(`Deleted movie file: ${room.movieFile.filename}`)
+      } catch (error) {
+        console.error("Error deleting movie file:", error)
+      }
+    }
+
+    await database.collection("rooms").updateOne(
+      { roomCode },
+      {
+        $set: {
+          isActive: false,
+          endedAt: new Date(),
+          updatedAt: new Date(),
+        },
       },
-    },
-  )
+    )
+  }
+}
+
+async function cleanupOldRooms() {
+  try {
+    const database = await connectToDatabase()
+    const bucket = new GridFSBucket(database, { bucketName: "movies" })
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000)
+
+    const oldRooms = await database.collection("rooms").find({
+      isActive: false,
+      endedAt: { $lt: oneDayAgo },
+    }).toArray()
+
+    for (const room of oldRooms) {
+      if (room.movieFile) {
+        try {
+          const files = await bucket.find({ filename: room.movieFile.filename }).toArray()
+          for (const file of files) {
+            await bucket.delete(file._id)
+          }
+        } catch (error) {
+          console.error("Error deleting old movie file:", error)
+        }
+      }
+    }
+
+    await database.collection("rooms").deleteMany({
+      isActive: false,
+      endedAt: { $lt: oneDayAgo },
+    })
+    console.log(`Cleaned up ${oldRooms.length} old rooms`)
+  } catch (error) {
+    console.error("Error cleaning up old rooms:", error)
+  }
 }
 
 // Create HTTP server
@@ -64,6 +114,9 @@ const io = new Server(httpServer, {
   transports: ["websocket", "polling"],
 })
 
+// Store user socket association: socket.id -> { userId, roomCode }
+const socketToUser = new Map()
+
 // Socket event handlers
 io.on("connection", (socket) => {
   console.log("User connected:", socket.id)
@@ -71,8 +124,11 @@ io.on("connection", (socket) => {
   // Join room
   socket.on("join-room", async (roomCode, userId) => {
     socket.join(roomCode)
-    socket.to(roomCode).emit("user-joined", userId)
-    console.log(`User ${userId} joined room ${roomCode}`)
+    socketToUser.set(socket.id, { userId, roomCode })
+    
+    // Broadcast both userId and socketId to the room
+    socket.to(roomCode).emit("user-joined", userId, socket.id)
+    console.log(`User ${userId} joined room ${roomCode} with socket ${socket.id}`)
 
     // Send current video state to new user
     try {
@@ -91,7 +147,8 @@ io.on("connection", (socket) => {
   // Leave room
   socket.on("leave-room", (roomCode, userId) => {
     socket.leave(roomCode)
-    socket.to(roomCode).emit("user-left", userId)
+    socketToUser.delete(socket.id)
+    socket.to(roomCode).emit("user-left", userId, socket.id)
     console.log(`User ${userId} left room ${roomCode}`)
   })
 
@@ -117,17 +174,23 @@ io.on("connection", (socket) => {
     io.to(roomCode).emit("chat-message", message)
   })
 
-  // WebRTC signaling
-  socket.on("webrtc-offer", (roomCode, offer, targetUserId) => {
-    socket.to(roomCode).emit("webrtc-offer", offer, socket.id)
+  // WebRTC signaling (targeted routing)
+  socket.on("webrtc-offer", (roomCode, offer, targetSocketId) => {
+    const sender = socketToUser.get(socket.id)
+    const senderUserId = sender ? sender.userId : null
+    io.to(targetSocketId).emit("webrtc-offer", offer, socket.id, senderUserId)
   })
 
-  socket.on("webrtc-answer", (roomCode, answer, targetUserId) => {
-    socket.to(roomCode).emit("webrtc-answer", answer, socket.id)
+  socket.on("webrtc-answer", (roomCode, answer, targetSocketId) => {
+    const sender = socketToUser.get(socket.id)
+    const senderUserId = sender ? sender.userId : null
+    io.to(targetSocketId).emit("webrtc-answer", answer, socket.id, senderUserId)
   })
 
-  socket.on("webrtc-ice-candidate", (roomCode, candidate, targetUserId) => {
-    socket.to(roomCode).emit("webrtc-ice-candidate", candidate, socket.id)
+  socket.on("webrtc-ice-candidate", (roomCode, candidate, targetSocketId) => {
+    const sender = socketToUser.get(socket.id)
+    const senderUserId = sender ? sender.userId : null
+    io.to(targetSocketId).emit("webrtc-ice-candidate", candidate, socket.id, senderUserId)
   })
 
   // Room ended by host
@@ -150,7 +213,15 @@ io.on("connection", (socket) => {
 
   // Disconnect
   socket.on("disconnect", () => {
-    console.log("User disconnected:", socket.id)
+    const info = socketToUser.get(socket.id)
+    if (info) {
+      const { userId, roomCode } = info
+      socketToUser.delete(socket.id)
+      socket.to(roomCode).emit("user-left", userId, socket.id)
+      console.log(`User ${userId} disconnected from room ${roomCode}`)
+    } else {
+      console.log("User disconnected:", socket.id)
+    }
   })
 })
 
@@ -159,6 +230,9 @@ const PORT = process.env.SOCKET_PORT || 3001
 httpServer.listen(PORT, () => {
   console.log(`Socket.IO server running on port ${PORT}`)
 })
+
+// Cleanup old rooms every hour
+setInterval(cleanupOldRooms, 60 * 60 * 1000)
 
 // Graceful shutdown
 process.on("SIGTERM", () => {

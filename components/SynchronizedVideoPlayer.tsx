@@ -38,6 +38,9 @@ export function SynchronizedVideoPlayer({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const controlsTimeoutRef = useRef<NodeJS.Timeout>();
+  
+  const isSeekingSyncRef = useRef(false);
+  const isPlayPauseSyncRef = useRef(false);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -64,16 +67,31 @@ export function SynchronizedVideoPlayer({
 
     const handlePlay = () => {
       console.log("▶️ Video play event");
+      if (isPlayPauseSyncRef.current) {
+        console.log("Ignored play event (sync)");
+        isPlayPauseSyncRef.current = false;
+        return;
+      }
       onPlay();
     };
 
     const handlePause = () => {
       console.log("⏸️ Video pause event");
+      if (isPlayPauseSyncRef.current) {
+        console.log("Ignored pause event (sync)");
+        isPlayPauseSyncRef.current = false;
+        return;
+      }
       onPause();
     };
 
     const handleSeeked = () => {
       console.log("⏭️ Video seeked to:", video.currentTime);
+      if (isSeekingSyncRef.current) {
+        console.log("Ignored seeked event (sync)");
+        isSeekingSyncRef.current = false;
+        return;
+      }
       onSeek(video.currentTime);
     };
 
@@ -134,17 +152,21 @@ export function SynchronizedVideoPlayer({
 
     if (Math.abs(video.currentTime - currentTime) > 2) {
       console.log("🔄 Syncing video time:", currentTime);
+      isSeekingSyncRef.current = true;
       video.currentTime = currentTime;
     }
 
     if (isPlaying && video.paused) {
       console.log("▶️ Syncing play state");
+      isPlayPauseSyncRef.current = true;
       video.play().catch((err) => {
+        isPlayPauseSyncRef.current = false;
         console.error("💥 Play error:", err);
         setError("Failed to play video");
       });
     } else if (!isPlaying && !video.paused) {
       console.log("⏸️ Syncing pause state");
+      isPlayPauseSyncRef.current = true;
       video.pause();
     }
   }, [currentTime, isPlaying]);

@@ -21,29 +21,25 @@ export default function MovieRoom({ params }: { params: { id: string } }) {
   const [room, setRoom] = useState<any>(null)
   const [chatMessages, setChatMessages] = useState<any[]>([])
   const [message, setMessage] = useState("")
-  const [users, setUser] = useState<any>(null)
   const [movieUploaded, setMovieUploaded] = useState(false)
   const [showChat, setShowChat] = useState(true)
   const [showParticipants, setShowParticipants] = useState(true)
 
   const { socket, isConnected, connectionError } = useSocket()
- const {user} = useAuth();
- console.log("User:", user?._id);
-  // Load user and room data
+  const { user, isLoading: authLoading } = useAuth()
+
+  const currentUserId = user?._id || user?.id
+
+  // Load room data when user is loaded
   useEffect(() => {
-    const loadUserAndRoom = async () => {
+    if (authLoading) return
+    if (!user) {
+      window.location.href = "/auth"
+      return
+    }
+
+    const loadRoom = async () => {
       try {
-        // Get user from cookie
-        const userSession = document.cookie
-          .split("; ")
-          .find((row) => row.startsWith("user-session="))
-          ?.split("=")[1]
-
-        if (userSession) {
-          const userData = JSON.parse(decodeURIComponent(userSession))
-          setUser(userData)
-        }
-
         // Get room data
         const getRoomResponse = await fetch(`/api/rooms/${params.id}`)
 
@@ -54,16 +50,14 @@ export default function MovieRoom({ params }: { params: { id: string } }) {
           setCurrentTime(roomData.currentTime || 0)
           setIsPlaying(roomData.isPlaying || false)
 
-          // Join room if user exists
-          if (userSession) {
-            const joinResponse = await fetch(`/api/rooms/${params.id}`, {
-              method: "POST",
-            })
+          // Join room (add participant in database)
+          const joinResponse = await fetch(`/api/rooms/${params.id}`, {
+            method: "POST",
+          })
 
-            if (joinResponse.ok) {
-              const updatedRoom = await joinResponse.json()
-              setRoom(updatedRoom)
-            }
+          if (joinResponse.ok) {
+            const updatedRoom = await joinResponse.json()
+            setRoom(updatedRoom)
           }
         } else if (getRoomResponse.status === 404) {
           alert("Room not found. Please check the room code.")
@@ -76,13 +70,13 @@ export default function MovieRoom({ params }: { params: { id: string } }) {
       }
     }
 
-    loadUserAndRoom()
-  }, [params.id])
+    loadRoom()
+  }, [params.id, user, authLoading])
 
   // Socket connection and room joining
   useEffect(() => {
-    if (socket && user && room && isConnected) {
-      socket.emit("join-room", params.id, user?._id)
+    if (socket && currentUserId && room && isConnected) {
+      socket.emit("join-room", params.id, currentUserId)
 
       // Listen for chat messages
       socket.on("chat-message", (newMessage) => {
@@ -123,14 +117,14 @@ export default function MovieRoom({ params }: { params: { id: string } }) {
       })
 
       return () => {
-        socket.emit("leave-room", params.id, user?._id)
+        socket.emit("leave-room", params.id, currentUserId)
         socket.off("chat-message")
         socket.off("video-control")
         socket.off("video-sync")
         socket.off("room-ended")
       }
     }
-  }, [socket, user, room, params.id, isConnected])
+  }, [socket, currentUserId, room, params.id, isConnected])
 
   const sendMessage = () => {
     if (message.trim() && socket && user && isConnected) {
@@ -161,8 +155,8 @@ export default function MovieRoom({ params }: { params: { id: string } }) {
         })
 
         if (response.ok) {
-          if (socket && isConnected && user) {
-            socket.emit("end-room", params.id, user?._id)
+          if (socket && isConnected && currentUserId) {
+            socket.emit("end-room", params.id, currentUserId)
           }
           window.location.href = "/dashboard"
         }
@@ -177,8 +171,7 @@ export default function MovieRoom({ params }: { params: { id: string } }) {
     alert("Room link copied to clipboard!")
   }
 
-  if (!room || !user) {
-    console.log("Loading room data...", user);
+  if (!room || !user || authLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center">
         <div className="text-white">Loading room...</div>
@@ -186,7 +179,7 @@ export default function MovieRoom({ params }: { params: { id: string } }) {
     )
   }
 
-  const isHost = room.hostId === user?._id
+  const isHost = room.hostId === currentUserId
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">

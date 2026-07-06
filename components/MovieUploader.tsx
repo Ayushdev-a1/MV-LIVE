@@ -133,18 +133,7 @@ export function MovieUploader({ roomCode, onUploadComplete, onUploadError }: Mov
             throw new Error(errorData.error || `Failed to upload chunk ${i}`);
           }
 
-          // Fetch progress
-          const progressResponse = await fetch(`/api/upload/progress/${sessionId}`, {
-            method: "GET",
-            signal: abortControllerRef.current.signal,
-          });
-
-          if (!progressResponse.ok) {
-            const errorData = await progressResponse.json();
-            throw new Error(errorData.error || "Failed to fetch progress");
-          }
-
-          const { progress, isComplete } = await progressResponse.json();
+          const { progress, isComplete } = await chunkResponse.json();
           setProgress(progress);
           console.log(`📤 Chunk ${i + 1}/${totalChunks} uploaded, progress: ${progress}%`);
 

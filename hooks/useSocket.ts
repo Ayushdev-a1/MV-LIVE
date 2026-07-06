@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react"
 import { io, type Socket } from "socket.io-client"
 
 export function useSocket() {
-  const socketRef = useRef<Socket | null>(null)
+  const [socket, setSocket] = useState<Socket | null>(null)
   const [isConnected, setIsConnected] = useState(false)
   const [connectionError, setConnectionError] = useState<string | null>(null)
 
@@ -13,7 +13,7 @@ export function useSocket() {
     const socketUrl =
       process.env.NODE_ENV === "production" ? window.location.origin.replace(/^http/, "ws") : "http://localhost:3001"
 
-    socketRef.current = io(socketUrl, {
+    const s = io(socketUrl, {
       transports: ["websocket", "polling"],
       upgrade: true,
       rememberUpgrade: true,
@@ -25,51 +25,49 @@ export function useSocket() {
       reconnectionDelayMax: 5000,
     })
 
-    const socket = socketRef.current
+    setSocket(s)
 
     // Connection event handlers
-    socket.on("connect", () => {
-      console.log("Socket connected:", socket.id)
+    s.on("connect", () => {
+      console.log("Socket connected:", s.id)
       setIsConnected(true)
       setConnectionError(null)
     })
 
-    socket.on("disconnect", (reason) => {
+    s.on("disconnect", (reason) => {
       console.log("Socket disconnected:", reason)
       setIsConnected(false)
     })
 
-    socket.on("connect_error", (error) => {
+    s.on("connect_error", (error) => {
       console.error("Socket connection error:", error)
       setConnectionError(error.message)
       setIsConnected(false)
     })
 
-    socket.on("reconnect", (attemptNumber) => {
+    s.on("reconnect", (attemptNumber) => {
       console.log("Socket reconnected after", attemptNumber, "attempts")
       setIsConnected(true)
       setConnectionError(null)
     })
 
-    socket.on("reconnect_error", (error) => {
+    s.on("reconnect_error", (error) => {
       console.error("Socket reconnection error:", error)
       setConnectionError(error.message)
     })
 
-    socket.on("reconnect_failed", () => {
+    s.on("reconnect_failed", () => {
       console.error("Socket reconnection failed")
       setConnectionError("Failed to reconnect to server")
     })
 
     return () => {
-      if (socket) {
-        socket.disconnect()
-      }
+      s.disconnect()
     }
   }, [])
 
   return {
-    socket: socketRef.current,
+    socket,
     isConnected,
     connectionError,
   }

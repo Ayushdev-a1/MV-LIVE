@@ -101,7 +101,7 @@ export function useAuth() {
 
       try {
         // Call the server API to create user
-        const response = await fetch("http://localhost:3000/api/auth/email", {
+        const response = await fetch("/api/auth/email", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -137,16 +137,6 @@ export function useAuth() {
   // Load user on mount
   useEffect(() => {
     loadUser().finally(() => setIsLoading(false));
-
-    // Poll for changes to user session every 5 seconds
-    const authCheckInterval = setInterval(() => {
-      console.log("🔄 Checking user session...");
-      loadUser();
-    }, 5000);
-
-    return () => {
-      clearInterval(authCheckInterval);
-    };
   }, [loadUser]);
 
   return { 
